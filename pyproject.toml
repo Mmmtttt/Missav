@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "missav-player"
+version = "0.1.0"
+description = "MissAV/Jable extractor and proxy toolkit"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+  "curl_cffi>=0.6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["missav*"]
