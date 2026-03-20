@@ -325,6 +325,14 @@ class MissavClient:
         parsed = urlparse(url)
         headers = self._build_proxy_headers(parsed.netloc, incoming_referer, incoming_headers)
 
+        # Check if Range header is present
+        range_header = None
+        if incoming_headers:
+            for key, value in incoming_headers.items():
+                if key.lower() == "range" and value:
+                    range_header = value
+                    break
+
         resp = cffi_requests.get(
             url,
             headers=headers,
@@ -334,9 +342,33 @@ class MissavClient:
 
         content = resp.content
         content_type = (resp.headers.get("Content-Type") or "").lower()
-        if "mpegurl" in content_type or "m3u8" in content_type or url.endswith(".m3u8"):
-            text = content.decode("utf-8", errors="replace")
-            content = self._rewrite_m3u8(text, url).encode("utf-8")
+        
+        # Check if content is m3u8
+        is_m3u8 = "mpegurl" in content_type or "m3u8" in content_type or url.endswith(".m3u8")
+        
+        if is_m3u8:
+            try:
+                text = content.decode("utf-8", errors="replace")
+                
+                # Check if it's a valid m3u8 file
+                if text.startswith("#EXTM3U"):
+                    # Only rewrite valid m3u8 files
+                    content = self._rewrite_m3u8(text, url).encode("utf-8")
+                else:
+                    # If not valid, check if it's a login page
+                    if "登入" in text or "JavDB" in text:
+                        # If it's a login page, return original content
+                        pass
+                    else:
+                        # Try to find m3u8 content in case of proxy errors
+                        import re
+                        m3u8_match = re.search(r"#EXTM3U[\s\S]*", text)
+                        if m3u8_match:
+                            text = m3u8_match.group(0)
+                            content = self._rewrite_m3u8(text, url).encode("utf-8")
+            except Exception as e:
+                # If m3u8 processing fails, return original content
+                pass
 
         return ProxyContentResponse(
             status_code=resp.status_code,
@@ -362,33 +394,39 @@ class MissavClient:
         except Exception:
             return unquote(raw_url)
 
-    def _rewrite_m3u8(self, content_text: str, playlist_url: str) -> str:
-        base_url = playlist_url.rsplit("/", 1)[0] + "/"
-
-        def replace_key_uri(match: re.Match) -> str:
-            full_match = match.group(0)
-            key_uri = match.group(2)
-            if key_uri.startswith("http://") or key_uri.startswith("https://"):
-                return full_match
-
-            key_full_url = urljoin(base_url, key_uri)
-            return full_match.replace(key_uri, self._build_absolute_proxy2_url(key_full_url))
-
-        content_text = _M3U8_KEY_PATTERN.sub(replace_key_uri, content_text)
-
-        lines = content_text.split("\n")
+    def _rewrite_m3u8(self, m3u8_content: str, base_url: str) -> str:
+        # Rewrite absolute URLs in m3u8 content to use proxy
+        import re
+        from urllib.parse import urljoin, quote
+        
+        lines = m3u8_content.split("\n")
         new_lines = []
+        
         for line in lines:
-            if line.strip() and not line.startswith("#"):
-                uri = line.strip()
-                if uri.startswith("http://") or uri.startswith("https://"):
-                    new_lines.append(uri)
-                else:
-                    absolute_uri = urljoin(base_url, uri)
-                    new_lines.append(self._build_absolute_proxy2_url(absolute_uri))
-            else:
+            stripped_line = line.strip()
+            
+            # Skip empty lines and comments
+            if not stripped_line or stripped_line.startswith("#"):
                 new_lines.append(line)
-
+                continue
+            
+            # Check if it's a URL
+            if stripped_line.startswith("http://") or stripped_line.startswith("https://"):
+                # It's an absolute URL
+                encoded_url = quote(stripped_line, safe='')
+                proxy_url = f"{self.proxy_base_path}/proxy2?url={encoded_url}"
+                new_lines.append(proxy_url)
+            else:
+                # It might be a relative URL
+                try:
+                    absolute_url = urljoin(base_url, stripped_line)
+                    encoded_url = quote(absolute_url, safe='')
+                    proxy_url = f"{self.proxy_base_path}/proxy2?url={encoded_url}"
+                    new_lines.append(proxy_url)
+                except:
+                    # If it's not a valid URL, leave it as is
+                    new_lines.append(line)
+        
         return "\n".join(new_lines)
 
     def _build_relative_proxy2_url(self, target_url: str) -> str:
@@ -410,13 +448,59 @@ class MissavClient:
 
         headers = {**_PROXY_HEADERS, "Referer": referer}
         
+        # Add JavDB cookies if needed
+        if "javdb" in lowered or "jdbstatic.com" in lowered:
+            cookie_header = self._load_javdb_cookie_header()
+            if cookie_header:
+                headers["Cookie"] = cookie_header
+        
         # Merge incoming headers if provided
         if incoming_headers:
             for key, value in incoming_headers.items():
-                if key.lower() not in _EXCLUDED_HEADERS:
+                if key.lower() not in _EXCLUDED_HEADERS and value:
                     headers[key] = value
         
         return headers
+
+    @staticmethod
+    def _load_javdb_cookie_header() -> str:
+        """Load JavDB cookies from third_party_config.json"""
+        import json
+        import os
+        
+        try:
+            # Find third_party_config.json
+            # Path: comic_backend/third_party/Missav/missav/client.py -> comic_backend/third_party_config.json
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+                "third_party_config.json"
+            )
+            
+            if not os.path.exists(config_path):
+                return ""
+            
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            
+            cookies = (
+                (config.get("adapters") or {})
+                .get("javdb", {})
+                .get("cookies", {})
+            )
+            
+            if not isinstance(cookies, dict):
+                return ""
+            
+            pairs = []
+            for key, value in cookies.items():
+                key_str = str(key or "").strip()
+                if not key_str:
+                    continue
+                pairs.append(f"{key_str}={str(value or '')}")
+            
+            return "; ".join(pairs)
+        except Exception:
+            return ""
 
     @staticmethod
     def _filter_headers(headers: Dict[str, str]) -> List[Tuple[str, str]]:
