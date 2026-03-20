@@ -63,6 +63,31 @@ class MissavClient:
         self.timeout_seconds = timeout_seconds
         self.impersonate = impersonate
 
+    def _request(
+        self,
+        method: str,
+        url: str,
+        headers: Dict[str, str] = None,
+        stream: bool = False,
+        timeout: int = None,
+        allow_redirects: bool = True,
+        impersonate: str = None,
+    ):
+        from curl_cffi import requests as cffi_requests
+
+        timeout = timeout or self.timeout_seconds
+        impersonate = impersonate or self.impersonate
+
+        return cffi_requests.request(
+            method,
+            url,
+            headers=headers or {},
+            stream=stream,
+            timeout=timeout,
+            allow_redirects=allow_redirects,
+            impersonate=impersonate,
+        )
+
     def build_sources(self, avid: str) -> List[Dict]:
         sources: List[Dict] = []
 
@@ -288,6 +313,7 @@ class MissavClient:
         query_string: str = "",
         body_url: str = "",
         incoming_referer: str = "",
+        incoming_headers: Dict[str, str] = None,
     ) -> ProxyContentResponse:
         url = self._resolve_proxy2_url(method, query_string, body_url)
         if not url:
@@ -297,7 +323,7 @@ class MissavClient:
             url = f"https://{url}"
 
         parsed = urlparse(url)
-        headers = self._build_proxy_headers(parsed.netloc, incoming_referer)
+        headers = self._build_proxy_headers(parsed.netloc, incoming_referer, incoming_headers)
 
         resp = cffi_requests.get(
             url,
@@ -373,7 +399,7 @@ class MissavClient:
         encoded = base64.b64encode(target_url.encode("utf-8")).decode("utf-8")
         return f"{self.proxy_base_path}/proxy2?url={encoded}"
 
-    def _build_proxy_headers(self, netloc_or_domain: str, incoming_referer: str) -> Dict[str, str]:
+    def _build_proxy_headers(self, netloc_or_domain: str, incoming_referer: str, incoming_headers: Dict[str, str] = None) -> Dict[str, str]:
         referer = incoming_referer or ""
         lowered = (netloc_or_domain or "").lower()
 
@@ -382,7 +408,15 @@ class MissavClient:
         elif "missav" in lowered or "surrit" in lowered or "mushroom" in lowered:
             referer = "https://missav.ai/"
 
-        return {**_PROXY_HEADERS, "Referer": referer}
+        headers = {**_PROXY_HEADERS, "Referer": referer}
+        
+        # Merge incoming headers if provided
+        if incoming_headers:
+            for key, value in incoming_headers.items():
+                if key.lower() not in _EXCLUDED_HEADERS:
+                    headers[key] = value
+        
+        return headers
 
     @staticmethod
     def _filter_headers(headers: Dict[str, str]) -> List[Tuple[str, str]]:
