@@ -469,12 +469,15 @@ class MissavClient:
         import os
         
         try:
-            # Find third_party_config.json
-            # Path: comic_backend/third_party/Missav/missav/client.py -> comic_backend/third_party_config.json
-            config_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-                "third_party_config.json"
-            )
+            try:
+                from core.constants import THIRD_PARTY_CONFIG_PATH
+                config_path = THIRD_PARTY_CONFIG_PATH
+            except Exception:
+                # Fallback for standalone execution.
+                config_path = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+                    "third_party_config.json"
+                )
             
             if not os.path.exists(config_path):
                 return ""
