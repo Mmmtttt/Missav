@@ -401,38 +401,48 @@ class MissavClient:
             return unquote(raw_url)
 
     def _rewrite_m3u8(self, m3u8_content: str, base_url: str) -> str:
-        # Rewrite absolute URLs in m3u8 content to use proxy
-        import re
-        from urllib.parse import urljoin, quote
-        
-        lines = m3u8_content.split("\n")
+        # Keep behavior aligned with standalone av_player_server:
+        # 1) rewrite EXT-X-KEY URI
+        # 2) rewrite media segment lines
+        from urllib.parse import urljoin
+
+        def build_proxy2_url(raw_url: str) -> str:
+            candidate = (raw_url or "").strip()
+            if not candidate:
+                return candidate
+
+            lowered = candidate.lower()
+            if (
+                lowered.startswith("/proxy2?url=")
+                or lowered.startswith(f"{self.proxy_base_path.lower()}/proxy2?url=")
+                or lowered.startswith("/api/v1/video/proxy2?url=")
+            ):
+                return candidate
+
+            absolute_url = candidate
+            if not (candidate.startswith("http://") or candidate.startswith("https://")):
+                absolute_url = urljoin(base_url, candidate)
+
+            encoded_url = base64.b64encode(absolute_url.encode("utf-8")).decode("utf-8")
+            return f"{self.proxy_base_path}/proxy2?url={encoded_url}"
+
+        def replace_key_uri(match: re.Match) -> str:
+            method = match.group(1)
+            key_uri = match.group(2)
+            proxy_key_url = build_proxy2_url(key_uri)
+            return f'#EXT-X-KEY:METHOD={method},URI="{proxy_key_url}"'
+
+        rewritten = _M3U8_KEY_PATTERN.sub(replace_key_uri, m3u8_content)
+
+        lines = rewritten.split("\n")
         new_lines = []
-        
         for line in lines:
             stripped_line = line.strip()
-            
-            # Skip empty lines and comments
             if not stripped_line or stripped_line.startswith("#"):
                 new_lines.append(line)
                 continue
-            
-            # Check if it's a URL
-            if stripped_line.startswith("http://") or stripped_line.startswith("https://"):
-                # It's an absolute URL
-                encoded_url = quote(stripped_line, safe='')
-                proxy_url = f"{self.proxy_base_path}/proxy2?url={encoded_url}"
-                new_lines.append(proxy_url)
-            else:
-                # It might be a relative URL
-                try:
-                    absolute_url = urljoin(base_url, stripped_line)
-                    encoded_url = quote(absolute_url, safe='')
-                    proxy_url = f"{self.proxy_base_path}/proxy2?url={encoded_url}"
-                    new_lines.append(proxy_url)
-                except:
-                    # If it's not a valid URL, leave it as is
-                    new_lines.append(line)
-        
+            new_lines.append(build_proxy2_url(stripped_line))
+
         return "\n".join(new_lines)
 
     def _build_relative_proxy2_url(self, target_url: str) -> str:
