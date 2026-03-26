@@ -168,8 +168,14 @@ class MissavClient:
         playlist_url = f"https://surrit.com/{uuid}/playlist.m3u8"
 
         try:
+            surrit_headers = {
+                **_PAGE_HEADERS,
+                "Origin": "https://missav.ai",
+                "Referer": "https://missav.ai/",
+            }
             playlist_response = cffi_requests.get(
                 playlist_url,
+                headers=surrit_headers,
                 timeout=10,
                 impersonate=self.impersonate,
             )
@@ -439,14 +445,18 @@ class MissavClient:
 
     def _build_proxy_headers(self, netloc_or_domain: str, incoming_referer: str, incoming_headers: Dict[str, str] = None) -> Dict[str, str]:
         referer = incoming_referer or ""
+        origin = ""
         lowered = (netloc_or_domain or "").lower()
 
         if "jable" in lowered or "javbus" in lowered:
             referer = f"https://{netloc_or_domain}/"
         elif "missav" in lowered or "surrit" in lowered or "mushroom" in lowered:
             referer = "https://missav.ai/"
+            origin = "https://missav.ai"
 
         headers = {**_PROXY_HEADERS, "Referer": referer}
+        if origin:
+            headers["Origin"] = origin
         
         # Add JavDB cookies if needed
         if "javdb" in lowered or "jdbstatic.com" in lowered:
