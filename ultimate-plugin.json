@@ -1,0 +1,23 @@
+{
+  "protocol_version": "1.0",
+  "plugin": {
+    "id": "video.missav",
+    "name": "Missav",
+    "version": "1.0.0",
+    "entrypoint": "./ultimate_provider.py:MissavProvider"
+  },
+  "media_types": ["video"],
+  "capabilities": [
+    { "key": "playback.sources.build" },
+    { "key": "playback.proxy.stream" },
+    { "key": "playback.proxy.url" }
+  ],
+  "configuration": {
+    "order": 100,
+    "label": "Missav",
+    "sections": []
+  },
+  "compatibility": {
+    "legacy_platforms": ["missav", "MISSAV"]
+  }
+}
