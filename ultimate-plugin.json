@@ -7,10 +7,15 @@
     "entrypoint": "./ultimate_provider.py:MissavProvider"
   },
   "media_types": ["video"],
+  "identity": {
+    "content_type": "video",
+    "platform_label": "MISSAV"
+  },
   "capabilities": [
     { "key": "playback.sources.build" },
     { "key": "playback.proxy.stream" },
-    { "key": "playback.proxy.url" }
+    { "key": "playback.proxy.url" },
+    { "key": "transport.http.request" }
   ],
   "configuration": {
     "order": 100,

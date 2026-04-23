@@ -39,4 +39,14 @@ class MissavProvider(ProtocolProvider):
                 incoming_referer=str(params.get("incoming_referer") or ""),
                 incoming_headers=dict(params.get("incoming_headers") or {}),
             )
+        if capability == "transport.http.request":
+            return client._request(
+                str(params.get("method") or "GET"),
+                str(params.get("url") or ""),
+                headers=dict(params.get("headers") or {}),
+                stream=bool(params.get("stream", False)),
+                timeout=int(params.get("timeout", 0) or 0) or None,
+                allow_redirects=bool(params.get("allow_redirects", True)),
+                impersonate=str(params.get("impersonate") or getattr(client, "impersonate", "chrome120")),
+            )
         raise ValueError(f"unsupported capability: {capability}")
