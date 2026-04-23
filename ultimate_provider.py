@@ -10,18 +10,21 @@ THIRD_PARTY_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 BACKEND_ROOT = os.path.abspath(os.path.join(THIRD_PARTY_ROOT, ".."))
 if BACKEND_ROOT not in sys.path:
     sys.path.insert(0, BACKEND_ROOT)
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
 
 from protocol.base import ProtocolProvider
-from third_party.missav import get_client
+from missav.client import MissavClient
 
 
 class MissavProvider(ProtocolProvider):
-    def get_legacy_client(self, config: Dict[str, Any], *args, **kwargs):
-        proxy_base_path = str(kwargs.get("proxy_base_path") or "/api/v1/video").strip() or "/api/v1/video"
-        return get_client(proxy_base_path=proxy_base_path)
+    def _get_client(self, proxy_base_path: str = "/api/v1/video") -> MissavClient:
+        normalized_proxy_base_path = str(proxy_base_path or "/api/v1/video").strip() or "/api/v1/video"
+        return MissavClient(proxy_base_path=normalized_proxy_base_path)
 
     def execute(self, capability: str, params: Dict[str, Any], context: Dict[str, Any], config: Dict[str, Any]):
-        client = self.get_legacy_client(config, proxy_base_path=params.get("proxy_base_path") or "/api/v1/video")
+        proxy_base_path = str(params.get("proxy_base_path") or "/api/v1/video").strip() or "/api/v1/video"
+        client = self._get_client(proxy_base_path=proxy_base_path)
         if capability == "playback.sources.build":
             return client.build_sources(str(params.get("code") or ""))
         if capability == "playback.proxy.stream":

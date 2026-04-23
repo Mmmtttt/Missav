@@ -9,7 +9,8 @@
   "media_types": ["video"],
   "identity": {
     "content_type": "video",
-    "platform_label": "MISSAV"
+    "platform_label": "MISSAV",
+    "aliases": ["missav"]
   },
   "capabilities": [
     { "key": "playback.sources.build" },
@@ -21,8 +22,5 @@
     "order": 100,
     "label": "Missav",
     "sections": []
-  },
-  "compatibility": {
-    "legacy_platforms": ["missav", "MISSAV"]
   }
 }
