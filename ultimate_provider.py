@@ -14,13 +14,33 @@ if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
 from protocol.base import ProtocolProvider
+from protocol.runtime_config import ProtocolConfigStore
 from missav.client import MissavClient
 
 
 class MissavProvider(ProtocolProvider):
+    @staticmethod
+    def _build_cookie_header(cookies: Dict[str, Any]) -> str:
+        if not isinstance(cookies, dict):
+            return ""
+        pairs = []
+        for raw_key, raw_value in cookies.items():
+            key = str(raw_key or "").strip()
+            value = str(raw_value or "").strip()
+            if key and value:
+                pairs.append(f"{key}={value}")
+        return "; ".join(pairs)
+
+    def _get_javdb_cookie_header(self) -> str:
+        config = ProtocolConfigStore().get_plugin_config("javdb", reload=True)
+        return self._build_cookie_header((config or {}).get("cookies") or {})
+
     def _get_client(self, proxy_base_path: str = "/api/v1/video") -> MissavClient:
         normalized_proxy_base_path = str(proxy_base_path or "/api/v1/video").strip() or "/api/v1/video"
-        return MissavClient(proxy_base_path=normalized_proxy_base_path)
+        return MissavClient(
+            proxy_base_path=normalized_proxy_base_path,
+            javdb_cookie_header=self._get_javdb_cookie_header(),
+        )
 
     def execute(self, capability: str, params: Dict[str, Any], context: Dict[str, Any], config: Dict[str, Any]):
         proxy_base_path = str(params.get("proxy_base_path") or "/api/v1/video").strip() or "/api/v1/video"

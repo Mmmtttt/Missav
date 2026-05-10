@@ -58,10 +58,12 @@ class MissavClient:
         proxy_base_path: str = "/api/v1/video",
         timeout_seconds: int = 30,
         impersonate: str = "chrome120",
+        javdb_cookie_header: str = "",
     ):
         self.proxy_base_path = proxy_base_path.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.impersonate = impersonate
+        self.javdb_cookie_header = str(javdb_cookie_header or "").strip()
 
     def _request(
         self,
@@ -469,10 +471,8 @@ class MissavClient:
             headers["Origin"] = origin
         
         # Add JavDB cookies if needed
-        if "javdb" in lowered or "jdbstatic.com" in lowered:
-            cookie_header = self._load_javdb_cookie_header()
-            if cookie_header:
-                headers["Cookie"] = cookie_header
+        if ("javdb" in lowered or "jdbstatic.com" in lowered) and self.javdb_cookie_header:
+            headers["Cookie"] = self.javdb_cookie_header
         
         # Merge incoming headers if provided
         if incoming_headers:
@@ -481,49 +481,6 @@ class MissavClient:
                     headers[key] = value
         
         return headers
-
-    @staticmethod
-    def _load_javdb_cookie_header() -> str:
-        """Load JavDB cookies from third_party_config.json"""
-        import json
-        import os
-        
-        try:
-            try:
-                from core.constants import THIRD_PARTY_CONFIG_PATH
-                config_path = THIRD_PARTY_CONFIG_PATH
-            except Exception:
-                # Fallback for standalone execution.
-                config_path = os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-                    "third_party_config.json"
-                )
-            
-            if not os.path.exists(config_path):
-                return ""
-            
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            
-            cookies = (
-                (config.get("adapters") or {})
-                .get("javdb", {})
-                .get("cookies", {})
-            )
-            
-            if not isinstance(cookies, dict):
-                return ""
-            
-            pairs = []
-            for key, value in cookies.items():
-                key_str = str(key or "").strip()
-                if not key_str:
-                    continue
-                pairs.append(f"{key_str}={str(value or '')}")
-            
-            return "; ".join(pairs)
-        except Exception:
-            return ""
 
     @staticmethod
     def _filter_headers(headers: Dict[str, str]) -> List[Tuple[str, str]]:
