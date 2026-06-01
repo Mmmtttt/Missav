@@ -5,6 +5,7 @@ MissAV/Jable extract and proxy client.
 from __future__ import annotations
 
 import base64
+import os
 import re
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -36,6 +37,24 @@ _PROXY_HEADERS = {
 _EXCLUDED_HEADERS = {"content-encoding", "content-length", "transfer-encoding", "connection"}
 _M3U8_STREAM_PATTERN = re.compile(r"#EXT-X-STREAM-INF:BANDWIDTH=(\d+),.*?RESOLUTION=(\d+x\d+).*?\n(.*)")
 _M3U8_KEY_PATTERN = re.compile(r'#EXT-X-KEY:METHOD=([^,]+),URI="([^"]+)"')
+_JABLE_HLS_PATTERN = re.compile(r"var\s+hlsUrl\s*=\s*'(https?://[^']+)'")
+_CHALLENGE_TEXT_MARKERS = (
+    "Just a moment...",
+    "Enable JavaScript and cookies to continue",
+    "/cdn-cgi/challenge-platform/",
+)
+_JABLE_BROWSER_ARGS = [
+    "--disable-blink-features=AutomationControlled",
+]
+_JABLE_BROWSER_CONTEXT = {
+    "user_agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/136.0.0.0 Safari/537.36"
+    ),
+    "viewport": {"width": 1280, "height": 800},
+    "locale": "zh-CN",
+}
 
 
 @dataclass
@@ -225,20 +244,31 @@ class MissavClient:
     def extract_from_jable(self, avid: str, domain: str = "jable.tv") -> Tuple[Optional[Dict], Optional[str]]:
         headers = {**_PAGE_HEADERS, "Referer": f"https://{domain}/"}
         page_url = f"https://{domain}/videos/{avid}/".lower()
+        html = None
+        browser_attempted = False
+        last_error = ""
 
         try:
             resp = cffi_requests.get(page_url, headers=headers, timeout=15, impersonate=self.impersonate)
+            html = resp.text if resp.status_code == 200 else ""
             if resp.status_code != 200:
-                return None, f"页面返回 {resp.status_code}"
-            html = resp.text
+                last_error = f"页面返回 {resp.status_code}"
+            elif self._is_cloudflare_challenge_html(html):
+                last_error = "页面被 Cloudflare challenge 拦截"
         except Exception as exc:
-            return None, f"请求失败: {exc}"
+            last_error = f"请求失败: {exc}"
 
-        match = re.search(r"var hlsUrl = '(https?://[^']+)'", html)
+        match = self._extract_jable_hls_match(html)
+        if match is None:
+            browser_attempted = True
+            html, browser_error = self._fetch_jable_page_with_playwright(page_url, headers=headers)
+            if browser_error:
+                return None, browser_error if not last_error else f"{last_error}; {browser_error}"
+            match = self._extract_jable_hls_match(html)
         if not match:
             return None, "未找到 m3u8 链接"
 
-        m3u8_url = match.group(1)
+        m3u8_url = match.group(1) if hasattr(match, "group") else str(match)
         try:
             m3u8_resp = cffi_requests.get(m3u8_url, headers=headers, timeout=10, impersonate=self.impersonate)
             if m3u8_resp.status_code != 200:
@@ -277,11 +307,125 @@ class MissavClient:
                     "m3u8_url": m3u8_url,
                     "page_url": page_url,
                     "source": "Jable",
+                    "browser_fallback": browser_attempted,
                 },
                 None,
             )
         except Exception as exc:
             return None, str(exc)
+
+    @staticmethod
+    def _extract_jable_hls_match(html: Optional[str]):
+        normalized_html = str(html or "")
+        if not normalized_html:
+            return None
+        return _JABLE_HLS_PATTERN.search(normalized_html)
+
+    @staticmethod
+    def _is_cloudflare_challenge_html(html: Optional[str]) -> bool:
+        normalized_html = str(html or "")
+        if not normalized_html:
+            return False
+        return any(marker in normalized_html for marker in _CHALLENGE_TEXT_MARKERS)
+
+    def _iter_jable_browser_launch_options(self):
+        preferred_channel = str(os.getenv("ULTIMATE_JABLE_BROWSER_CHANNEL") or "").strip().lower()
+        channels = []
+        if preferred_channel:
+            channels.append(preferred_channel)
+        channels.extend(["msedge", "chrome", "chromium"])
+
+        seen = set()
+        for channel in channels:
+            normalized = str(channel or "").strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+
+            if normalized == "chromium":
+                yield {"headless": True, "args": list(_JABLE_BROWSER_ARGS)}, "chromium"
+            else:
+                yield {"headless": True, "channel": normalized, "args": list(_JABLE_BROWSER_ARGS)}, normalized
+
+    def _fetch_jable_page_with_playwright(self, page_url: str, headers: Optional[Dict[str, str]] = None) -> Tuple[Optional[str], Optional[str]]:
+        try:
+            from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+        except Exception as exc:
+            return None, f"Playwright 不可用: {exc}"
+
+        extra_headers = {}
+        if isinstance(headers, dict):
+            referer = str(headers.get("Referer") or "").strip()
+            accept_language = str(headers.get("Accept-Language") or "").strip()
+            if referer:
+                extra_headers["Referer"] = referer
+            if accept_language:
+                extra_headers["Accept-Language"] = accept_language
+
+        attempts = []
+        playwright = sync_playwright().start()
+        try:
+            for launch_options, label in self._iter_jable_browser_launch_options():
+                browser = None
+                context = None
+                try:
+                    browser = playwright.chromium.launch(**launch_options)
+                    context_options = dict(_JABLE_BROWSER_CONTEXT)
+                    if extra_headers:
+                        context_options["extra_http_headers"] = dict(extra_headers)
+                    context = browser.new_context(**context_options)
+                    page = context.new_page()
+                    page.add_init_script(
+                        """
+                        Object.defineProperty(navigator, 'webdriver', {
+                          get: () => undefined
+                        });
+                        """
+                    )
+                    page.goto(page_url, wait_until="domcontentloaded", timeout=60000)
+                    page.wait_for_timeout(8000)
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=10000)
+                    except PlaywrightTimeoutError:
+                        pass
+
+                    html = ""
+                    for _ in range(4):
+                        try:
+                            html = page.content()
+                        except Exception:
+                            page.wait_for_timeout(2000)
+                            continue
+
+                        if self._extract_jable_hls_match(html):
+                            return html, None
+                        if not self._is_cloudflare_challenge_html(html):
+                            break
+                        page.wait_for_timeout(3000)
+
+                    if html and self._extract_jable_hls_match(html):
+                        return html, None
+                    if self._is_cloudflare_challenge_html(html):
+                        attempts.append(f"{label}: Cloudflare challenge 未通过")
+                    else:
+                        attempts.append(f"{label}: 页面已加载但未找到 hlsUrl")
+                except Exception as exc:
+                    attempts.append(f"{label}: {exc}")
+                finally:
+                    if context is not None:
+                        try:
+                            context.close()
+                        except Exception:
+                            pass
+                    if browser is not None:
+                        try:
+                            browser.close()
+                        except Exception:
+                            pass
+        finally:
+            playwright.stop()
+
+        return None, "; ".join(attempts) or "Playwright 未能获取到 Jable 页面"
 
     def proxy_stream(
         self,

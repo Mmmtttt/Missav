@@ -33,11 +33,11 @@
   },
   "packaging": {
     "external": {
-      "pip_requirements": ["curl_cffi>=0.6.0", "cffi>=1.15.0"]
+      "pip_requirements": ["curl_cffi>=0.6.0", "cffi>=1.15.0", "playwright>=1.55.0"]
     },
     "pyinstaller": {
-      "collect_all": ["curl_cffi", "cffi"],
-      "pip_requirements": ["curl_cffi>=0.6.0", "cffi>=1.15.0"]
+      "collect_all": ["curl_cffi", "cffi", "playwright"],
+      "pip_requirements": ["curl_cffi>=0.6.0", "cffi>=1.15.0", "playwright>=1.55.0"]
     }
   }
 }
