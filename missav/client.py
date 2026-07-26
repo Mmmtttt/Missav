@@ -114,7 +114,6 @@ class MissavClient:
 
         extractors = (
             ("MissAV", "missav", self.extract_from_missav),
-            ("Jable", "jable", self.extract_from_jable),
         )
         for source_name, source_id, extractor in extractors:
             try:
