@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import unquote, urljoin, urlparse
@@ -160,17 +161,30 @@ class MissavClient:
 
         html = None
         page_url = None
+        last_status = None
+        last_exc = None
         for url in urls:
-            try:
-                resp = cffi_requests.get(url, headers=headers, timeout=15, impersonate=self.impersonate)
-                if resp.status_code == 200:
-                    html = resp.text
-                    page_url = url
-                    break
-            except Exception:
-                continue
+            for attempt in range(3):
+                try:
+                    resp = cffi_requests.get(url, headers=headers, timeout=15, impersonate=self.impersonate)
+                    last_status = resp.status_code
+                    if resp.status_code == 200:
+                        html = resp.text
+                        page_url = url
+                        break
+                    # Cloudflare challenge / rate limit: back off and retry
+                    time.sleep(1.5 * (attempt + 1))
+                except Exception as exc:
+                    last_exc = exc
+                    time.sleep(1.0 * (attempt + 1))
+            if html:
+                break
 
         if not html:
+            if last_exc is not None:
+                return None, f"无法获取页面: {last_exc}"
+            if last_status is not None:
+                return None, f"无法获取页面 (HTTP {last_status})"
             return None, "无法获取页面"
 
         uuid = None
