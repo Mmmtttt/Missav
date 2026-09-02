@@ -27,7 +27,18 @@
       "unconfigured_message": "",
       "disabled_message": "MissAV 平台未启用，不能使用该平台查询。"
     },
-    "sections": []
+    "sections": [
+      {
+        "key": "basic",
+        "label": "基础配置",
+        "fields": [
+          { "key": "enabled", "label": "启用", "type": "boolean" },
+          { "key": "impersonate", "label": "浏览器指纹", "type": "text", "placeholder": "chrome131" },
+          { "key": "domains", "label": "候选域名", "type": "textarea", "placeholder": "missav.ai,missav.ws,missav.com" },
+          { "key": "cookie_string", "label": "Cookie", "type": "textarea", "placeholder": "可留空", "secret": true }
+        ]
+      }
+    ]
   },
   "runtime": {
     "python_paths": ["."],
@@ -36,6 +47,32 @@
       "vendor/python/{python_tag}",
       "vendor/python/{python_tag}/{platform_tag}"
     ]
+  },
+  "resource_policy": {
+    "assets": {
+      "video": {
+        "request_profiles": [
+          {
+            "match_hosts": ["missav.ai", "surrit.com", "mushroomtrack.com"],
+            "referer": "https://missav.ai/",
+            "origin": "https://missav.ai",
+            "frontend_proxy": true
+          }
+        ]
+      },
+      "preview_video": {
+        "available": true,
+        "download_enabled": false,
+        "request_profiles": [
+          {
+            "match_hosts": ["missav.ai", "surrit.com", "mushroomtrack.com"],
+            "referer": "https://missav.ai/",
+            "origin": "https://missav.ai",
+            "frontend_proxy": true
+          }
+        ]
+      }
+    }
   },
   "packaging": {
     "external": {

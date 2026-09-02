@@ -17,7 +17,7 @@ CORS(app)
 PROXY = None
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
 }
@@ -36,7 +36,7 @@ def extract_from_missav(avid: str, domain: str = 'missav.ai'):
     page_url = None
     for url in urls:
         try:
-            resp = cffi_requests.get(url, headers=headers, timeout=15, impersonate="chrome120")
+            resp = cffi_requests.get(url, headers=headers, timeout=15, impersonate="chrome131")
             if resp.status_code == 200:
                 html = resp.text
                 page_url = url
@@ -64,7 +64,7 @@ def extract_from_missav(avid: str, domain: str = 'missav.ai'):
             'Origin': 'https://missav.ai',
             'Referer': 'https://missav.ai/',
         }
-        pl_resp = cffi_requests.get(playlist_url, headers=surrit_headers, timeout=10, impersonate="chrome120")
+        pl_resp = cffi_requests.get(playlist_url, headers=surrit_headers, timeout=10, impersonate="chrome131")
         if pl_resp.status_code != 200:
             return None, "无法获取播放列表"
         
@@ -109,7 +109,7 @@ def extract_from_jable(avid: str, domain: str = 'jable.tv'):
     url = f'https://{domain}/videos/{avid}/'.lower()
     
     try:
-        resp = cffi_requests.get(url, headers=headers, timeout=15, impersonate="chrome120")
+        resp = cffi_requests.get(url, headers=headers, timeout=15, impersonate="chrome131")
         if resp.status_code != 200:
             return None, f"页面返回 {resp.status_code}"
         
@@ -130,7 +130,7 @@ def extract_from_jable(avid: str, domain: str = 'jable.tv'):
         import base64
         parsed = urlparse(m3u8_url)
         
-        m3u8_resp = cffi_requests.get(m3u8_url, headers=headers, timeout=10, impersonate="chrome120")
+        m3u8_resp = cffi_requests.get(m3u8_url, headers=headers, timeout=10, impersonate="chrome131")
         if m3u8_resp.status_code != 200:
             return None, "无法获取 m3u8 内容"
         
@@ -241,7 +241,7 @@ def proxy_request(domain, path):
             headers=headers,
             proxies={'http': PROXY, 'https': PROXY} if PROXY else None,
             timeout=30,
-            impersonate="chrome120"
+            impersonate="chrome131"
         )
         
         content = resp.content
@@ -332,7 +332,7 @@ def proxy_request2():
             headers=headers,
             proxies={'http': PROXY, 'https': PROXY} if PROXY else None,
             timeout=30,
-            impersonate="chrome120"
+            impersonate="chrome131"
         )
         
         content = resp.content

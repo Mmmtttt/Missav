@@ -7,7 +7,6 @@ from __future__ import annotations
 import base64
 import os
 import re
-import time
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import unquote, urljoin, urlparse
@@ -19,7 +18,7 @@ _PAGE_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
+        "Chrome/131.0.0.0 Safari/537.36"
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
@@ -29,13 +28,25 @@ _PROXY_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
+        "Chrome/131.0.0.0 Safari/537.36"
     ),
     "Accept": "*/*",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 }
 
-_EXCLUDED_HEADERS = {"content-encoding", "content-length", "transfer-encoding", "connection"}
+_EXCLUDED_HEADERS = {
+    "access-control-allow-credentials",
+    "access-control-allow-headers",
+    "access-control-allow-methods",
+    "access-control-allow-origin",
+    "access-control-expose-headers",
+    "access-control-max-age",
+    "connection",
+    "content-encoding",
+    "content-length",
+    "transfer-encoding",
+}
+_FORWARDED_PROXY_REQUEST_HEADERS = {"range", "if-range", "accept"}
 _M3U8_STREAM_PATTERN = re.compile(r"#EXT-X-STREAM-INF:BANDWIDTH=(\d+),.*?RESOLUTION=(\d+x\d+).*?\n(.*)")
 _M3U8_KEY_PATTERN = re.compile(r'#EXT-X-KEY:METHOD=([^,]+),URI="([^"]+)"')
 _JABLE_HLS_PATTERN = re.compile(r"var\s+hlsUrl\s*=\s*'(https?://[^']+)'")
@@ -56,6 +67,7 @@ _JABLE_BROWSER_CONTEXT = {
     "viewport": {"width": 1280, "height": 800},
     "locale": "zh-CN",
 }
+_DEFAULT_MISSAV_DOMAINS = ["missav.ai", "missav.ws", "missav.com"]
 
 
 @dataclass
@@ -77,13 +89,17 @@ class MissavClient:
         self,
         proxy_base_path: str = "/api/v1/video",
         timeout_seconds: int = 30,
-        impersonate: str = "chrome120",
+        impersonate: str = "chrome131",
         javdb_cookie_header: str = "",
+        missav_cookie_header: str = "",
+        missav_domains: Optional[List[str]] = None,
     ):
         self.proxy_base_path = proxy_base_path.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.impersonate = impersonate
         self.javdb_cookie_header = str(javdb_cookie_header or "").strip()
+        self.missav_cookie_header = str(missav_cookie_header or "").strip()
+        self.missav_domains = self._normalize_missav_domains(missav_domains)
 
     def _request(
         self,
@@ -150,62 +166,79 @@ class MissavClient:
 
         return sources
 
-    def extract_from_missav(self, avid: str, domain: str = "missav.ai") -> Tuple[Optional[Dict], Optional[str]]:
-        headers = {**_PAGE_HEADERS, "Referer": f"https://{domain}/"}
+    @staticmethod
+    def _extract_missav_uuid(html: str) -> Optional[str]:
+        match = re.search(r"m3u8\|([a-f0-9\|]+)\|com\|surrit\|https\|video", html or "")
+        if match:
+            return "-".join(match.group(1).split("|")[::-1])
 
-        urls = [
-            f"https://{domain}/cn/{avid}-chinese-subtitle".lower(),
-            f"https://{domain}/cn/{avid}-uncensored-leak".lower(),
-            f"https://{domain}/cn/{avid}".lower(),
-        ]
+        match = re.search(r"surrit\.com/([a-f0-9-]+)", html or "")
+        if match:
+            return match.group(1)
+        return None
 
-        html = None
+    @staticmethod
+    def _normalize_missav_domains(domains: Optional[List[str]]) -> List[str]:
+        normalized: List[str] = []
+        raw_domains = domains if isinstance(domains, list) else _DEFAULT_MISSAV_DOMAINS
+        for raw_domain in raw_domains:
+            domain = str(raw_domain or "").strip().lower()
+            domain = re.sub(r"^https?://", "", domain).strip("/")
+            if domain and domain not in normalized:
+                normalized.append(domain)
+        return normalized or list(_DEFAULT_MISSAV_DOMAINS)
+
+    def extract_from_missav(self, avid: str, domain: str = "") -> Tuple[Optional[Dict], Optional[str]]:
+        domains = self._normalize_missav_domains([domain] if domain else self.missav_domains)
+
+        uuid = None
         page_url = None
+        source_domain = domains[0]
         last_status = None
         last_exc = None
-        for url in urls:
-            for attempt in range(3):
+        for candidate_domain in domains:
+            headers = {**_PAGE_HEADERS, "Referer": f"https://{candidate_domain}/"}
+            if self.missav_cookie_header:
+                headers["Cookie"] = self.missav_cookie_header
+
+            urls = [
+                f"https://{candidate_domain}/cn/{avid}-chinese-subtitle".lower(),
+                f"https://{candidate_domain}/cn/{avid}-uncensored-leak".lower(),
+                f"https://{candidate_domain}/cn/{avid}".lower(),
+            ]
+
+            for url in urls:
                 try:
                     resp = cffi_requests.get(url, headers=headers, timeout=15, impersonate=self.impersonate)
                     last_status = resp.status_code
-                    if resp.status_code == 200:
-                        html = resp.text
+                    if resp.status_code != 200:
+                        continue
+
+                    candidate_uuid = self._extract_missav_uuid(resp.text)
+                    if candidate_uuid:
+                        uuid = candidate_uuid
                         page_url = url
+                        source_domain = candidate_domain
                         break
-                    # Cloudflare challenge / rate limit: back off and retry
-                    time.sleep(1.5 * (attempt + 1))
                 except Exception as exc:
                     last_exc = exc
-                    time.sleep(1.0 * (attempt + 1))
-            if html:
+            if uuid:
                 break
 
-        if not html:
+        if not uuid:
             if last_exc is not None:
                 return None, f"无法获取页面: {last_exc}"
             if last_status is not None:
                 return None, f"无法获取页面 (HTTP {last_status})"
             return None, "无法获取页面"
 
-        uuid = None
-        match = re.search(r"m3u8\|([a-f0-9\|]+)\|com\|surrit\|https\|video", html)
-        if match:
-            uuid = "-".join(match.group(1).split("|")[::-1])
-        else:
-            match = re.search(r"surrit\.com/([a-f0-9-]+)", html)
-            if match:
-                uuid = match.group(1)
-
-        if not uuid:
-            return None, "未找到视频源"
-
         playlist_url = f"https://surrit.com/{uuid}/playlist.m3u8"
 
         try:
             surrit_headers = {
                 **_PAGE_HEADERS,
-                "Origin": "https://missav.ai",
-                "Referer": "https://missav.ai/",
+                "Origin": f"https://{source_domain}",
+                "Referer": f"https://{source_domain}/",
             }
             playlist_response = cffi_requests.get(
                 playlist_url,
@@ -489,51 +522,46 @@ class MissavClient:
 
         parsed = urlparse(url)
         headers = self._build_proxy_headers(parsed.netloc, incoming_referer, incoming_headers)
+        method_name = str(method or "GET").upper()
 
-        # Check if Range header is present
-        range_header = None
-        if incoming_headers:
-            for key, value in incoming_headers.items():
-                if key.lower() == "range" and value:
-                    range_header = value
-                    break
-
-        resp = cffi_requests.get(
+        resp = cffi_requests.request(
+            method_name,
             url,
             headers=headers,
+            stream=True,
             timeout=self.timeout_seconds,
             impersonate=self.impersonate,
         )
 
-        content = resp.content
         content_type = (resp.headers.get("Content-Type") or "").lower()
-        
-        # Check if content is m3u8
         is_m3u8 = "mpegurl" in content_type or "m3u8" in content_type or url.endswith(".m3u8")
-        
-        if is_m3u8:
-            try:
-                text = content.decode("utf-8", errors="replace")
-                
-                # Check if it's a valid m3u8 file
-                if text.startswith("#EXTM3U"):
-                    # Only rewrite valid m3u8 files
+
+        if method_name == "HEAD":
+            resp.close()
+            return ProxyContentResponse(
+                status_code=resp.status_code,
+                headers=self._filter_headers(resp.headers),
+                content=b"",
+            )
+
+        if not is_m3u8:
+            return resp
+
+        content = resp.content
+        try:
+            text = content.decode("utf-8", errors="replace")
+
+            if text.startswith("#EXTM3U"):
+                content = self._rewrite_m3u8(text, url).encode("utf-8")
+            elif "登入" not in text and "JavDB" not in text:
+                m3u8_match = re.search(r"#EXTM3U[\s\S]*", text)
+                if m3u8_match:
+                    text = m3u8_match.group(0)
                     content = self._rewrite_m3u8(text, url).encode("utf-8")
-                else:
-                    # If not valid, check if it's a login page
-                    if "登入" in text or "JavDB" in text:
-                        # If it's a login page, return original content
-                        pass
-                    else:
-                        # Try to find m3u8 content in case of proxy errors
-                        import re
-                        m3u8_match = re.search(r"#EXTM3U[\s\S]*", text)
-                        if m3u8_match:
-                            text = m3u8_match.group(0)
-                            content = self._rewrite_m3u8(text, url).encode("utf-8")
-            except Exception as e:
-                # If m3u8 processing fails, return original content
-                pass
+        except Exception:
+            pass
+        finally:
+            resp.close()
 
         return ProxyContentResponse(
             status_code=resp.status_code,
@@ -631,10 +659,10 @@ class MissavClient:
         if ("javdb" in lowered or "jdbstatic.com" in lowered) and self.javdb_cookie_header:
             headers["Cookie"] = self.javdb_cookie_header
         
-        # Merge incoming headers if provided
+        # Browser page headers must not override the upstream anti-hotlink profile.
         if incoming_headers:
             for key, value in incoming_headers.items():
-                if key.lower() not in _EXCLUDED_HEADERS and value:
+                if key.lower() in _FORWARDED_PROXY_REQUEST_HEADERS and value:
                     headers[key] = value
         
         return headers
