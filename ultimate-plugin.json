@@ -4,7 +4,8 @@
     "id": "video.missav",
     "name": "Missav",
     "version": "1.0.0",
-    "entrypoint": "./ultimate_provider.py:MissavProvider"
+    "entrypoint": "./ultimate_provider.py:MissavProvider",
+    "config_key": "missav"
   },
   "media_types": ["video"],
   "identity": {
@@ -81,6 +82,19 @@
     "pyinstaller": {
       "collect_all": ["curl_cffi", "cffi", "playwright"],
       "pip_requirements": ["curl_cffi>=0.6.0", "cffi>=1.15.0", "playwright>=1.55.0"]
+    },
+    "android": {
+      "enabled": true,
+      "pip_options": ["--no-deps"],
+      "pip_requirements": [
+        "cffi==1.17.1",
+        "chaquopy-libffi>=3.3",
+        "pycparser>=2.21",
+        "curl-cffi==0.16.3"
+      ],
+      "notes": [
+        "Android packaging intentionally excludes Playwright because build_sources uses the curl_cffi MISSAV path and Playwright requires external browser binaries."
+      ]
     }
   }
 }
