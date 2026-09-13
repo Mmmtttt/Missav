@@ -13,7 +13,12 @@ if str(REPO_ROOT) not in sys.path:
 protocol = types.ModuleType("protocol")
 base = types.ModuleType("protocol.base")
 runtime_config = types.ModuleType("protocol.runtime_config")
-base.ProtocolProvider = object
+class ProtocolProvider:
+    def __init__(self, *args, **kwargs):
+        del args, kwargs
+
+
+base.ProtocolProvider = ProtocolProvider
 runtime_config.ProtocolConfigStore = type(
     "ProtocolConfigStore",
     (),
